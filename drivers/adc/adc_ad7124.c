@@ -212,7 +212,6 @@ struct ad7124_channel_config {
 struct adc_ad7124_config {
 	struct spi_dt_spec bus;
 	uint16_t filter_type_mask;
-	uint16_t bipolar_mask;
 	uint16_t inbuf_enable_mask;
 	uint16_t refbuf_enable_mask;
 	enum ad7124_mode adc_mode;
@@ -415,7 +414,7 @@ static int adc_ad7124_create_new_cfg(const struct device *dev, const struct adc_
 	}
 
 	new_cfg->props.odr_sel_bits = adc_ad7124_odr_to_fs(dev, odr);
-	new_cfg->props.bipolar = config->bipolar_mask & BIT(cfg->channel_id);
+	new_cfg->props.bipolar = cfg->differential;
 	new_cfg->props.inbuf_enable = config->inbuf_enable_mask & BIT(cfg->channel_id);
 	new_cfg->props.refbuf_enable = config->refbuf_enable_mask & BIT(cfg->channel_id);
 
@@ -1357,7 +1356,6 @@ static DEVICE_API(adc, adc_ad7124_api) = {
 			SPI_OP_MODE_MASTER | SPI_MODE_CPOL | SPI_MODE_CPHA | SPI_WORD_SET(8), 0),  \
 		.resolution = AD7124_RESOLUTION,                                                   \
 		.filter_type_mask = DT_INST_PROP(inst, filter_type_mask),                          \
-		.bipolar_mask = DT_INST_PROP(inst, bipolar_mask),                                  \
 		.inbuf_enable_mask = DT_INST_PROP(inst, inbuf_enable_mask),                        \
 		.refbuf_enable_mask = DT_INST_PROP(inst, refbuf_enable_mask),                      \
 		.adc_mode = DT_INST_PROP(inst, adc_mode),                                          \
