@@ -31,20 +31,6 @@ properties:
       for all filter setups upon power-up or after reset.
       Therefore, this setting is considered the default for all channels.
 
-  bipolar-mask:
-    type: int
-    default: 0xFFFF
-    description: |
-      Bipolar configuration for AD7124
-      Each bit set in this mask enables the polarity,
-      with the 0th bit corresponding to the 0th channel,
-      the 1st bit to the 1st channel, and so on.
-      - 0 Unipolar operation selection
-      - 1 Bipolar operation selection
-      The default is set to 0xFFFF because the bipolar configuration
-      is activated for all configuration setups upon power-up or after reset.
-      Therefore, this setting is considered the default for all channels.
-
   inbuf-enable-mask:
     type: int
     default: 0xFFFF
