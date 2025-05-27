@@ -26,10 +26,12 @@ LOG_MODULE_REGISTER(adc_ad7124, CONFIG_ADC_LOG_LEVEL);
 #define AD7124_RESOLUTION             24
 #define AD7124_SPI_RDY_POLL_CNT       10000
 
+/* Maximum number of analog inputs*/
+#define AD7124_MAX_ANALOG_INPUTS 8
 /* Maximum number of channels */
-#define AD7124_MAX_CHANNELS 16
+#define AD7124_MAX_CHANNELS      16
 /* Total Number of Setups */
-#define AD7124_MAX_SETUPS   8
+#define AD7124_MAX_SETUPS        8
 
 /* AD7124-4 Standard Device ID */
 #define AD7124_4_STD_ID     0x04
@@ -56,15 +58,16 @@ LOG_MODULE_REGISTER(adc_ad7124, CONFIG_ADC_LOG_LEVEL);
 #define ADC_ODR_SEL_BITS_MIN 0x1
 
 /* AD7124 registers */
-#define AD7124_STATUS      0x00
-#define AD7124_ADC_CONTROL 0x01
-#define AD7124_DATA        0x02
-#define AD7124_ID          0x05
-#define AD7124_ERROR       0x06
-#define AD7124_ERROR_EN    0x07
-#define AD7124_CHANNEL(x)  (0x09 + (x))
-#define AD7124_CONFIG(x)   (0x19 + (x))
-#define AD7124_FILTER(x)   (0x21 + (x))
+#define AD7124_STATUS       0x00
+#define AD7124_ADC_CONTROL  0x01
+#define AD7124_DATA         0x02
+#define AD7124_IO_CONTROL_1 0x03
+#define AD7124_ID           0x05
+#define AD7124_ERROR        0x06
+#define AD7124_ERROR_EN     0x07
+#define AD7124_CHANNEL(x)   (0x09 + (x))
+#define AD7124_CONFIG(x)    (0x19 + (x))
+#define AD7124_FILTER(x)    (0x21 + (x))
 
 /* Configuration Registers 0-7 bits */
 #define AD7124_CFG_REG_BIPOLAR   BIT(11)
@@ -117,6 +120,9 @@ LOG_MODULE_REGISTER(adc_ad7124, CONFIG_ADC_LOG_LEVEL);
 #define AD7124_POWER_MODE_MSK        GENMASK(7, 6)
 #define AD7124_ADC_CTRL_REG_MODE_MSK GENMASK(5, 2)
 
+/* IO Control 1 register bits */
+#define AD7124_IOUT_MSK GENMASK(13, 0)
+
 /* Error register bits */
 #define AD7124_ERR_REG_SPI_IGNORE_ERR BIT(6)
 
@@ -124,6 +130,7 @@ enum ad7124_register_lengths {
 	AD7124_STATUS_REG_LEN = 1,
 	AD7124_ADC_CONTROL_REG_LEN = 2,
 	AD7124_DATA_REG_LEN = 3,
+	AD7124_IO_CONTROL_1_REG_LEN = 2,
 	AD7124_ID_REG_LEN = 1,
 	AD7124_ERROR_REG_LEN = 3,
 	AD7124_ERROR_EN_REG_LEN = 3,
@@ -193,6 +200,33 @@ enum ad7124_filter_type {
 	AD7124_FILTER_SINC3 = 2U,
 };
 
+enum ad7124_iout_current {
+	AD7124_IOUT_CURRENT_OFF,
+	AD7124_IOUT_CURRENT_50_UA,
+	AD7124_IOUT_CURRENT_100_UA,
+	AD7124_IOUT_CURRENT_250_UA,
+	AD7124_IOUT_CURRENT_500_UA,
+	AD7124_IOUT_CURRENT_750_UA,
+	AD7124_IOUT_CURRENT_1000_UA,
+	AD7124_IOUT_CURRENT_0_1_UA,
+};
+
+enum ad7124_iout_channel {
+	AD7124_IOUT_AIN0 = 0,
+	AD7124_IOUT_AIN1 = 1,
+	AD7124_IOUT_AIN2 = 4,
+	AD7124_IOUT_AIN3 = 5,
+	AD7124_IOUT_AIN4 = 10,
+	AD7124_IOUT_AIN5 = 11,
+	AD7124_IOUT_AIN6 = 14,
+	AD7124_IOUT_AIN7 = 15,
+};
+
+struct ad714_current_source_config {
+	enum ad7124_iout_current current;
+	enum ad7124_iout_channel channel;
+};
+
 struct ad7124_config_props {
 	enum ad7124_reference_source refsel;
 	enum ad7124_gain pga_bits;
@@ -226,6 +260,7 @@ struct adc_ad7124_data {
 	struct adc_context ctx;
 	struct ad7124_control_status adc_control_status;
 	struct ad7124_channel_config channel_setup_cfg[AD7124_MAX_CHANNELS];
+	struct ad714_current_source_config current_sources[2];
 	uint8_t setup_cfg_slots;
 	struct k_sem acquire_signal;
 	uint16_t channels;
@@ -499,7 +534,7 @@ static int adc_ad7124_read_reg(const struct device *dev, uint32_t reg,
 	uint32_t cntrl_value = 0;
 	uint8_t add_status_length = 0;
 	uint8_t buffer_tx[AD7124_MAX_RETURNED_DATA_SIZE] = {0};
-	uint8_t buffer_rx[ARRAY_SIZE(buffer_tx)];
+	uint8_t buffer_rx[ARRAY_SIZE(buffer_tx)] = {0, 0, 0, 0, 0, 0};
 	uint8_t crc_check;
 
 	if (reg != AD7124_ERROR && data->spi_ready) {
@@ -789,6 +824,58 @@ static int adc_ad7124_channel_cfg(const struct device *dev, const struct adc_cha
 	return 0;
 }
 
+static enum ad7124_iout_channel adc_ad7124_current_source_pin_to_channel(uint8_t pin) {
+	switch (pin) {
+		case 0:
+		return AD7124_IOUT_AIN0;
+		case 1:
+		return AD7124_IOUT_AIN1;
+		case 2:
+		return AD7124_IOUT_AIN2;
+		case 3:
+		return AD7124_IOUT_AIN3;
+		case 4:
+		return AD7124_IOUT_AIN4;
+		case 5:
+		return AD7124_IOUT_AIN5;
+		case 6:
+		return AD7124_IOUT_AIN6;
+		case 7:
+		return AD7124_IOUT_AIN7;
+	}
+	return AD7124_IOUT_AIN0;
+}
+
+static int adc_ad7124_channel_current_source(const struct device *dev, const struct adc_channel_cfg *cfg)
+{
+	struct adc_ad7124_data *data = dev->data;
+	if (cfg->current_source_pin[0] > 0b1111) {
+		LOG_ERR("Invalid current source configuration %u", cfg->current_source_pin[0]);
+		return -EINVAL;
+	}
+	if (cfg->current_source_pin[1] >= AD7124_MAX_ANALOG_INPUTS) {
+		LOG_ERR("Invalid current source channel %u", cfg->current_source_pin[1]);
+		return -EINVAL;
+	}
+	uint8_t iout_idx = (cfg->current_source_pin[0] >> 3) & 1;
+	data->current_sources[iout_idx].current =
+		(enum ad7124_iout_current)(cfg->current_source_pin[0] & 0b111);
+	data->current_sources[iout_idx].channel =
+		adc_ad7124_current_source_pin_to_channel(cfg->current_source_pin[1]);
+
+	uint32_t value = (data->current_sources[1].current << 11)
+		| (data->current_sources[1].channel << 4)
+		| (data->current_sources[0].current << 8)
+		| data->current_sources[0].channel;
+	int ret = adc_ad7124_reg_write_msk(dev, AD7124_IO_CONTROL_1, AD7124_IO_CONTROL_1_REG_LEN,
+				       FIELD_PREP(AD7124_IOUT_MSK, value), AD7124_IOUT_MSK);
+	if (ret) {
+		return ret;
+	}
+
+	return 0;
+}
+
 static int adc_ad7124_channel_setup(const struct device *dev, const struct adc_channel_cfg *cfg)
 {
 	struct adc_ad7124_data *data = dev->data;
@@ -845,7 +932,25 @@ static int adc_ad7124_channel_setup(const struct device *dev, const struct adc_c
 		return ret;
 	}
 
+	if (cfg->current_source_pin_set) {
+		ret = adc_ad7124_channel_current_source(dev, cfg);
+		if (ret) {
+			LOG_ERR("Error setting up current sources");
+			return ret;
+		}
+	}
+
 	WRITE_BIT(data->channels, cfg->channel_id, true);
+
+	uint32_t val;
+	adc_ad7124_read_reg(dev, AD7124_IO_CONTROL_1, AD7124_IO_CONTROL_1_REG_LEN, &val);
+	printk("%u %u\n", AD7124_IO_CONTROL_1, val);
+	adc_ad7124_read_reg(dev, AD7124_CHANNEL(0), AD7124_CHANNEL_REG_LEN, &val);
+	printk("%u %u\n", AD7124_CHANNEL(0), val);
+	adc_ad7124_read_reg(dev, AD7124_CONFIG(0), AD7124_CONFIG_REG_LEN, &val);
+	printk("%u %u\n", AD7124_CONFIG(0), val);
+	adc_ad7124_read_reg(dev, AD7124_FILTER(0), AD7124_FILTER_REG_LEN, &val);
+	printk("%u %u\n", AD7124_FILTER(0), val);
 
 	return 0;
 }
@@ -1050,6 +1155,14 @@ static int adc_ad7124_setup(const struct device *dev)
 	}
 
 	ret = adc_ad7124_set_power_mode(dev, config->power_mode);
+	if (ret) {
+		return ret;
+	}
+	ret = adc_ad7124_reg_write_msk(dev, AD7124_ADC_CONTROL, AD7124_ADC_CONTROL_REG_LEN, 4096, GENMASK(12, 12));
+	if (ret) {
+		return ret;
+	}
+	ret = adc_ad7124_reg_write_msk(dev, AD7124_ADC_CONTROL, AD7124_ADC_CONTROL_REG_LEN, 256, GENMASK(8, 8));
 	if (ret) {
 		return ret;
 	}
@@ -1326,6 +1439,12 @@ static int adc_ad7124_init(const struct device *dev)
 	if (ret) {
 		return ret;
 	}
+
+	uint32_t val;
+	adc_ad7124_read_reg(dev, AD7124_ADC_CONTROL, AD7124_ADC_CONTROL_REG_LEN, &val);
+	printk("%u %u\n", AD7124_ADC_CONTROL, val);
+	adc_ad7124_read_reg(dev, AD7124_ERROR_EN, AD7124_ERROR_EN_REG_LEN, &val);
+	printk("%u %u\n", AD7124_ERROR_EN, val);
 
 #if CONFIG_ADC_ASYNC
 	k_tid_t tid = k_thread_create(
