@@ -99,6 +99,7 @@ LOG_MODULE_REGISTER(adc_ad7124, CONFIG_ADC_LOG_LEVEL);
 
 /* Filter register bits */
 #define AD7124_FILTER_CONF_REG_FILTER_MSK GENMASK(23, 21)
+#define AD7124_FILTER_POST_FILTER_MSK     GENMASK(19, 17)
 #define AD7124_FILTER_FS_MSK              GENMASK(10, 0)
 
 /* Channel register bits */
@@ -448,7 +449,8 @@ static int adc_ad7124_create_new_cfg(const struct device *dev, const struct adc_
 		new_cfg->props.filter_type = AD7124_FILTER_SINC4;
 	}
 
-	new_cfg->props.odr_sel_bits = adc_ad7124_odr_to_fs(dev, odr);
+	// TODO: remove this
+	new_cfg->props.odr_sel_bits = 48; // adc_ad7124_odr_to_fs(dev, odr);
 	new_cfg->props.bipolar = cfg->differential;
 	new_cfg->props.inbuf_enable = config->inbuf_enable_mask & BIT(cfg->channel_id);
 	new_cfg->props.refbuf_enable = config->refbuf_enable_mask & BIT(cfg->channel_id);
@@ -739,7 +741,8 @@ static int adc_ad7124_filter_cfg(const struct device *dev, const struct ad7124_c
 	int ret;
 
 	filter_setup = FIELD_PREP(AD7124_FILTER_CONF_REG_FILTER_MSK, cfg->props.filter_type) |
-		       FIELD_PREP(AD7124_FILTER_FS_MSK, cfg->props.odr_sel_bits);
+		       FIELD_PREP(AD7124_FILTER_FS_MSK, cfg->props.odr_sel_bits) |
+		       FIELD_PREP(AD7124_FILTER_POST_FILTER_MSK, 3);
 	filter_mask = AD7124_FILTER_CONF_REG_FILTER_MSK | AD7124_FILTER_FS_MSK;
 
 	/* Set filter type and odr*/
@@ -878,6 +881,7 @@ static int adc_ad7124_channel_current_source(const struct device *dev, const str
 
 static int adc_ad7124_channel_setup(const struct device *dev, const struct adc_channel_cfg *cfg)
 {
+	const struct adc_ad7124_config *config = dev->config;
 	struct adc_ad7124_data *data = dev->data;
 	struct ad7124_channel_config new_cfg;
 	int new_slot;
@@ -925,13 +929,6 @@ static int adc_ad7124_channel_setup(const struct device *dev, const struct adc_c
 		return ret;
 	}
 
-	/* Setup the channel */
-	ret = adc_ad7124_channel_cfg(dev, cfg);
-	if (ret) {
-		LOG_ERR("Error setting up channel");
-		return ret;
-	}
-
 	if (cfg->current_source_pin_set) {
 		ret = adc_ad7124_channel_current_source(dev, cfg);
 		if (ret) {
@@ -940,17 +937,14 @@ static int adc_ad7124_channel_setup(const struct device *dev, const struct adc_c
 		}
 	}
 
-	WRITE_BIT(data->channels, cfg->channel_id, true);
+	/* Setup the channel */
+	ret = adc_ad7124_channel_cfg(dev, cfg);
+	if (ret) {
+		LOG_ERR("Error setting up channel");
+		return ret;
+	}
 
-	uint32_t val;
-	adc_ad7124_read_reg(dev, AD7124_IO_CONTROL_1, AD7124_IO_CONTROL_1_REG_LEN, &val);
-	printk("%u %u\n", AD7124_IO_CONTROL_1, val);
-	adc_ad7124_read_reg(dev, AD7124_CHANNEL(0), AD7124_CHANNEL_REG_LEN, &val);
-	printk("%u %u\n", AD7124_CHANNEL(0), val);
-	adc_ad7124_read_reg(dev, AD7124_CONFIG(0), AD7124_CONFIG_REG_LEN, &val);
-	printk("%u %u\n", AD7124_CONFIG(0), val);
-	adc_ad7124_read_reg(dev, AD7124_FILTER(0), AD7124_FILTER_REG_LEN, &val);
-	printk("%u %u\n", AD7124_FILTER(0), val);
+	WRITE_BIT(data->channels, cfg->channel_id, true);
 
 	return 0;
 }
@@ -989,7 +983,7 @@ int adc_ad7124_reset(const struct device *dev)
 
 	struct spi_buf tx_buf[] = {{
 		.buf = buffer_tx,
-		.len = ARRAY_SIZE(buffer_tx),
+		.len = sizeof(buffer_tx),
 	}};
 
 	const struct spi_buf_set tx = {.buffers = tx_buf, .count = ARRAY_SIZE(tx_buf)};
@@ -1007,46 +1001,26 @@ int adc_ad7124_reset(const struct device *dev)
 	return ret;
 }
 
-static int adc_ad7124_update_crc(const struct device *dev)
+static void adc_ad7124_update_crc(const struct device *dev, uint32_t error_en)
 {
 	struct adc_ad7124_data *data = dev->data;
 
-	int ret = 0;
-	uint32_t reg_temp = 0;
-
-	ret = adc_ad7124_read_reg(dev, AD7124_ERROR_EN, AD7124_ERROR_EN_REG_LEN, &reg_temp);
-	if (ret) {
-		return ret;
-	}
-
-	if (reg_temp & AD7124_ERREN_REG_SPI_CRC_ERR_EN) {
+	if (error_en & AD7124_ERREN_REG_SPI_CRC_ERR_EN) {
 		data->crc_enable = true;
 	} else {
 		data->crc_enable = false;
 	}
-
-	return 0;
 }
 
-static int adc_ad7124_update_spi_check_ready(const struct device *dev)
+static void adc_ad7124_update_spi_check_ready(const struct device *dev, uint32_t error_en)
 {
 	struct adc_ad7124_data *data = dev->data;
 
-	int ret = 0;
-	uint32_t reg_temp = 0;
-
-	ret = adc_ad7124_read_reg(dev, AD7124_ERROR_EN, AD7124_ERROR_EN_REG_LEN, &reg_temp);
-	if (ret) {
-		return ret;
-	}
-
-	if (reg_temp & AD7124_ERREN_REG_SPI_IGNORE_ERR_EN) {
+	if (error_en & AD7124_ERREN_REG_SPI_IGNORE_ERR_EN) {
 		data->spi_ready = true;
 	} else {
 		data->spi_ready = false;
 	}
-
-	return 0;
 }
 
 static int adc_ad7124_check_chip_id(const struct device *dev)
@@ -1119,6 +1093,7 @@ static int adc_ad7124_setup(const struct device *dev)
 {
 	const struct adc_ad7124_config *config = dev->config;
 	int ret;
+	uint32_t error_en;
 
 	/* Reset the device interface */
 	ret = adc_ad7124_reset(dev);
@@ -1126,16 +1101,20 @@ static int adc_ad7124_setup(const struct device *dev)
 		return ret;
 	}
 
-	/* Get CRC State */
-	ret = adc_ad7124_update_crc(dev);
+	ret = adc_ad7124_write_reg(dev, AD7124_ADC_CONTROL, AD7124_ADC_CONTROL_REG_LEN, 0);
 	if (ret) {
 		return ret;
 	}
 
-	ret = adc_ad7124_update_spi_check_ready(dev);
+	ret = adc_ad7124_read_reg(dev, AD7124_ERROR_EN, AD7124_ERROR_EN_REG_LEN, &error_en);
 	if (ret) {
 		return ret;
 	}
+
+	/* Update CRC State */
+	adc_ad7124_update_crc(dev, error_en);
+	/* Update SPI ready check */
+	adc_ad7124_update_spi_check_ready(dev, error_en);
 
 	/* Check the device ID */
 	ret = adc_ad7124_check_chip_id(dev);
@@ -1155,14 +1134,6 @@ static int adc_ad7124_setup(const struct device *dev)
 	}
 
 	ret = adc_ad7124_set_power_mode(dev, config->power_mode);
-	if (ret) {
-		return ret;
-	}
-	ret = adc_ad7124_reg_write_msk(dev, AD7124_ADC_CONTROL, AD7124_ADC_CONTROL_REG_LEN, 4096, GENMASK(12, 12));
-	if (ret) {
-		return ret;
-	}
-	ret = adc_ad7124_reg_write_msk(dev, AD7124_ADC_CONTROL, AD7124_ADC_CONTROL_REG_LEN, 256, GENMASK(8, 8));
 	if (ret) {
 		return ret;
 	}
@@ -1439,12 +1410,6 @@ static int adc_ad7124_init(const struct device *dev)
 	if (ret) {
 		return ret;
 	}
-
-	uint32_t val;
-	adc_ad7124_read_reg(dev, AD7124_ADC_CONTROL, AD7124_ADC_CONTROL_REG_LEN, &val);
-	printk("%u %u\n", AD7124_ADC_CONTROL, val);
-	adc_ad7124_read_reg(dev, AD7124_ERROR_EN, AD7124_ERROR_EN_REG_LEN, &val);
-	printk("%u %u\n", AD7124_ERROR_EN, val);
 
 #if CONFIG_ADC_ASYNC
 	k_tid_t tid = k_thread_create(
